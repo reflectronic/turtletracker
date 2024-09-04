@@ -84,8 +84,8 @@ public sealed class ModuleFile
                     var b4 = reader.ReadByte();
 
                     var sampleNumber = (byte)((b1 & 0xF0) | (b3 >> 4));
-                    var samplePeriod = (short)(b2 & ((b1 & 0xF) << 8));
-                    var effectCommand = (short)(b4 & ((b3 & 0xF) << 8));
+                    var samplePeriod = (short)(b2 | ((b1 & 0xF) << 8));
+                    var effectCommand = (short)(b4 | ((b3 & 0xF) << 8));
 
                     return new(sampleNumber, samplePeriod, effectCommand);
                 }

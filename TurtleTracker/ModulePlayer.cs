@@ -57,17 +57,21 @@ public sealed class ModulePlayer
         for (int currentDivision = 0; currentDivision < 64; currentDivision++)
         {
             ModuleDivision division = pattern.Divisions[currentDivision];
-            var (sampleNumber, samplePeriod, effectCommand) = division.Channel3;
+            var (sampleNumber, samplePeriod, effectCommand) = division.Channel2;
 
-            if (sampleNumber != 0) 
+            if (sampleNumber != 0 || samplePeriod != 0)
             {
-                currentSample = module.SampleData[sampleNumber - 1];
+                if (sampleNumber != 0)
+                {
+                    currentSample = module.SampleData[sampleNumber - 1];
+                }
+                
                 samplesPlayed = 0;
             }
 
             for (int i = 0; i < speed; i++)
             {
-                int bytesWritten = Resample(currentSample, 8287, audioBuf, samplesPlayed);
+                int bytesWritten = Resample(currentSample, (int)(7159090.5 / (samplePeriod * 2)), audioBuf, samplesPlayed);
                 samplesPlayed += 882;
                 Sdl.QueueAudio<sbyte>(audioDevice, audioBuf, (uint)audioBuf.Length);
             }
