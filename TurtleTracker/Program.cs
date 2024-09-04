@@ -11,3 +11,5 @@ Console.WriteLine($"Name: {modFile.Name}");
 
 var player = new ModulePlayer(modFile);
 player.Play();
+
+Thread.Sleep(-1);
