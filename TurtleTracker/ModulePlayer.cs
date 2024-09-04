@@ -52,27 +52,31 @@ public sealed class ModulePlayer
             var pattern = module.Patterns[currentPattern];
 
             sbyte[] currentSample = default!;
+            short currentPeriod = 0;
 
             for (int currentDivision = 0; currentDivision < 64; currentDivision++)
             {
                 ModuleDivision division = pattern.Divisions[currentDivision];
                 var (sampleNumber, samplePeriod, effectCommand) = division.Channel2;
 
-                if (sampleNumber != 0 || samplePeriod != 0)
+                if (sampleNumber != 0)
                 {
-                    if (sampleNumber != 0)
-                    {
-                        currentSample = module.SampleData[sampleNumber - 1];
-                    }
+                    currentSample = module.SampleData[sampleNumber - 1];
+                    samplesPlayed = 0;
+                }
 
+                if (samplePeriod != 0)
+                {
+                    currentPeriod = samplePeriod;
                     samplesPlayed = 0;
                 }
 
                 for (int i = 0; i < speed; i++)
                 {
-                    int bytesWritten = Resample(currentSample, (int)(7159090.5 / (samplePeriod * 2)), audioBuf, samplesPlayed);
-                    samplesPlayed += 882;
+                    int bytesWritten = Resample(currentSample, (int)(7159090.5 / (currentPeriod * 2)), audioBuf, samplesPlayed);
+                    samplesPlayed += bytesWritten;
                     Sdl.QueueAudio<sbyte>(audioDevice, audioBuf, (uint)audioBuf.Length);
+                    // System.Threading.Thread.Sleep(20);
                 }
             }
         }
@@ -96,14 +100,8 @@ public sealed class ModulePlayer
             var lowerSample = (int)double.Floor(interpolatedPoint);
             var upperSample = (int)double.Ceiling(interpolatedPoint);
 
-            if (upperSample > sample.Length)
+            if (upperSample >= sample.Length)
             {
-                break;
-            }
-
-            if (upperSample == sample.Length)
-            {
-                @out[i] = sample[lowerSample];
                 break;
             }
 
