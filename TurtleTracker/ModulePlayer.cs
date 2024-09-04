@@ -8,8 +8,10 @@ public sealed class ModulePlayer
     private readonly AudioSpec audioSpec;
     private readonly ModuleFile module;
 
-    private int patternIndex;
-    private int divisionIndex;
+    private int currentPattern;
+    private int currentDivision;
+
+    private int speed = 6;
 
     private uint audioDevice;
 
@@ -18,7 +20,7 @@ public sealed class ModulePlayer
     {
         audioSpec = new AudioSpec
         {
-            Channels = 2,
+            Channels = 1,
             Samples = 1024,
             Freq = 44100,
             Format = Sdl.AudioS8
@@ -45,44 +47,55 @@ public sealed class ModulePlayer
         Sdl.PauseAudioDevice(audioDevice, 0);
         Sdl.ThrowError();
 
-        var audioBuf = new sbyte[100_000];
-        var pattern = module.Patterns[patternIndex];
+        var audioBuf = new sbyte[882];
+        var pattern = module.Patterns[currentPattern];
 
-        var resampledTick = new sbyte[882];
+        sbyte[] currentSample = default!;
 
-        for (int i = 0; i < module.SampleData.Length; i++)
+        int samplesPlayed = 0;
+
+        for (int currentDivision = 0; currentDivision < 64; currentDivision++)
         {
-            // var division = pattern.Divisions[divisionIndex];
-            // var (sampleIndex, samplePeriod, effectCommand) = division.Channel1;
-            // var sample = module.SampleData[4];
+            ModuleDivision division = pattern.Divisions[currentDivision];
+            var (sampleNumber, samplePeriod, effectCommand) = division.Channel3;
 
-            var sample = module.SampleData[i];
-            unsafe 
+            if (sampleNumber != 0) 
             {
-                int bufSize = Resample(sample, 8287, audioBuf);
-                fixed (sbyte* audio = audioBuf)
-                {
-                    Sdl.QueueAudio(audioDevice, audio, (uint)bufSize);
-                }
+                currentSample = module.SampleData[sampleNumber - 1];
+                samplesPlayed = 0;
             }
 
-            System.Threading.Thread.Sleep(2000);
+            for (int i = 0; i < speed; i++)
+            {
+                int bytesWritten = Resample(currentSample, 8287, audioBuf, samplesPlayed);
+                samplesPlayed += 882;
+                Sdl.QueueAudio<sbyte>(audioDevice, audioBuf, (uint)audioBuf.Length);
+            }
         }
+
+        System.Threading.Thread.Sleep(100000);
     }
 
-    private int Resample(ReadOnlySpan<sbyte> sample, int sampleRate, Span<sbyte> @out)
+    private static int Resample(ReadOnlySpan<sbyte> sample, int sampleRate, Span<sbyte> @out, int sampleStart)
     {
-        var ratio = sampleRate / 44100.0;        
+        @out.Clear();
+        var ratio = sampleRate / 44100.0;
 
         int i;
         for (i = 0; i < @out.Length; i++)
         {
-            var interpolatedPoint = i * ratio;
+            var interpolatedPoint = (sampleStart + i) * ratio;
             var lowerSample = (int)double.Floor(interpolatedPoint);
             var upperSample = (int)double.Ceiling(interpolatedPoint);
 
-            if (upperSample >= sample.Length)
+            if (upperSample > sample.Length)
             {
+                break;
+            }
+
+            if (upperSample == sample.Length)
+            {
+                @out[i] = sample[lowerSample];
                 break;
             }
 
