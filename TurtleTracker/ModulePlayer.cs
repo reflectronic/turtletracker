@@ -42,16 +42,17 @@ public sealed class ModulePlayer
         Sdl.PauseAudioDevice(audioDevice, 0);
         Sdl.ThrowError();
 
-        var audioBuf = new sbyte[882];
+        var renderedSamples = new sbyte[882];
 
         var speed = 6;
-        int samplesPlayed = 0;
+        int lastSampleOffset = 0;
 
         foreach (var currentPattern in module.Sequence)
         {
             var pattern = module.Patterns[currentPattern];
 
-            sbyte[] currentSample = default!;
+            ModuleSample currentSample = default!;
+            sbyte[] currentSampleData = default!;
             short currentPeriod = 0;
 
             for (int currentDivision = 0; currentDivision < 64; currentDivision++)
@@ -61,57 +62,97 @@ public sealed class ModulePlayer
 
                 if (sampleNumber != 0)
                 {
-                    currentSample = module.SampleData[sampleNumber - 1];
-                    samplesPlayed = 0;
+                    currentSample = module.Samples[sampleNumber - 1];
+                    currentSampleData = module.SampleData[sampleNumber - 1];
+                    lastSampleOffset = 0;
                 }
 
                 if (samplePeriod != 0)
                 {
                     currentPeriod = samplePeriod;
-                    samplesPlayed = 0;
+                    lastSampleOffset = 0;
                 }
 
                 for (int i = 0; i < speed; i++)
                 {
-                    int bytesWritten = Resample(currentSample, (int)(7159090.5 / (currentPeriod * 2)), audioBuf, samplesPlayed);
-                    samplesPlayed += bytesWritten;
-                    Sdl.QueueAudio<sbyte>(audioDevice, audioBuf, (uint)audioBuf.Length);
+                    if (currentPeriod != 0)
+                    {
+                        lastSampleOffset = RenderSample(
+                            currentSample, 
+                            currentSampleData, 
+                            currentPeriod, 
+                            lastSampleOffset, 
+                            renderedSamples);
+                    }
+
+                    Sdl.QueueAudio<sbyte>(audioDevice, renderedSamples, (uint)renderedSamples.Length);
                     // System.Threading.Thread.Sleep(20);
                 }
             }
         }
     }
 
-    private static int Resample(ReadOnlySpan<sbyte> sample, int sampleRate, Span<sbyte> @out, int sampleStart)
+    private static int RenderSample(ModuleSample sample, ReadOnlySpan<sbyte> sampleData, int period, int startOffset, Span<sbyte> @out)
     {
         @out.Clear();
 
-        if (sample.Length == 0)
+        if (sampleData.Length == 0)
         {
             return 0;
         }
 
+        var sampleRate = (int)(7159090.5 / (period * 2));
         var ratio = sampleRate / 44100.0;
 
-        int i;
-        for (i = 0; i < @out.Length; i++)
-        {
-            var interpolatedPoint = (sampleStart + i) * ratio;
-            var lowerSample = (int)double.Floor(interpolatedPoint);
-            var upperSample = (int)double.Ceiling(interpolatedPoint);
+        int resampledOffset = startOffset;
+        bool looped = false;
 
-            if (upperSample >= sample.Length)
+        for (int i = 0; i < @out.Length; i++)
+        {
+            double interpolatedPoint;
+            int lowerSample;
+            int upperSample;
+
+            int ToResampledIndex(int sampleOffset) => (int)(sampleOffset / ratio);
+
+            void SetInterpolatedPoint()
             {
-                break;
+                interpolatedPoint = resampledOffset * ratio;
+                lowerSample = (int)double.Floor(interpolatedPoint);
+                upperSample = (int)double.Ceiling(interpolatedPoint);   
+            }
+
+
+            SetInterpolatedPoint();
+
+            if (upperSample >= sampleData.Length)
+            {
+                if (sample.LoopOffsetStart > 1)
+                {
+                    looped = true;
+                    resampledOffset = ToResampledIndex(sample.LoopOffsetStart * 2);
+                    SetInterpolatedPoint();
+                }
+                else
+                {
+                    break;
+                }
             }
 
             var percent = interpolatedPoint - lowerSample;
-
-            var interpolatedSample = double.Lerp(sample[lowerSample], sample[upperSample], percent);
-
+            var interpolatedSample = double.Lerp(sampleData[lowerSample], sampleData[upperSample], percent);
             @out[i] = (sbyte)interpolatedSample;
+
+            if (looped && resampledOffset == (int)((sample.LoopOffsetStart + sample.LoopOffsetLength) * 2 / ratio))
+            {
+                resampledOffset = ToResampledIndex(sample.LoopOffsetStart * 2);
+            }
+            else
+            {
+                resampledOffset++;
+            }
         }
 
-        return i;
+        return resampledOffset;
     }
 }

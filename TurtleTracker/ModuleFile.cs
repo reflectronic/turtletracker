@@ -177,7 +177,7 @@ public sealed record ModuleSample(
     byte Finetune,
     byte Volume,
     short LoopOffsetStart,
-    short LoopOffsetEnd);
+    short LoopOffsetLength);
 
 public readonly record struct ModuleNote(byte Sample, short SamplePeriod, short EffectCommand);
 
