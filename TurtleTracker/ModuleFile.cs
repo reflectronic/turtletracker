@@ -1,7 +1,6 @@
 using System.Buffers;
 using System.Collections.Immutable;
-using System.Diagnostics;
-using System.Reflection;
+using System.Runtime.InteropServices;
 using System.Text;
 
 namespace TurtleTracker;
@@ -24,7 +23,7 @@ public sealed class ModuleFile
         string name = FromNullPadded(reader.Read(20));
 
         // 15 or 31 samples?
-        var tag = modFile.AsSpan(1080, 4);
+        ReadOnlySpan<byte> tag = modFile.AsSpan(1080, 4);
 
         if (!tag.SequenceEqual("M.K."u8))
         {
@@ -52,25 +51,26 @@ public sealed class ModuleFile
             ));
         }
 
-        var positionCount = reader.ReadByte();
+        var sequenceLength = reader.ReadByte();
         reader.Advance(1);
         
-        var positions = reader.Read(128);
+        var sequence = reader.Read(128);
 
-        int patternCount = -1;
-        foreach (var p in positions)
+        int maxPattern = -1;
+        foreach (var p in sequence)
         {
-            if (patternCount < p)
+            if (maxPattern < p)
             {
-                patternCount = p;
+                maxPattern = p;
             }
         }
 
+        // We already verified the tag
         reader.Advance(4);
 
         var patterns = ImmutableArray.CreateBuilder<ModulePattern>();
 
-        for (int i = 0; i < patternCount; i++)
+        for (int i = 0; i <= maxPattern; i++)
         {
             var divisions = ImmutableArray.CreateBuilder<ModuleDivision>(64);
 
@@ -101,11 +101,11 @@ public sealed class ModuleFile
             patterns.Add(new ModulePattern(divisions.MoveToImmutable()));
         }
 
-        var sampleDatas = ImmutableArray.CreateBuilder<byte[]>();
+        var sampleDatas = ImmutableArray.CreateBuilder<sbyte[]>();
 
         foreach (var sample in samples) 
         {
-            sampleDatas.Add(reader.Read(sample.Length).ToArray());
+            sampleDatas.Add(MemoryMarshal.Cast<byte, sbyte>(reader.Read(sample.Length * 2)).ToArray());
         }
 
         return new ModuleFile()
@@ -114,7 +114,7 @@ public sealed class ModuleFile
             Samples = samples.DrainToImmutable(),
             SampleData = sampleDatas.DrainToImmutable(),
             Patterns = patterns.DrainToImmutable(),
-            Positions = positions[..positionCount].ToImmutableArray()
+            Sequence = sequence[..sequenceLength].ToImmutableArray()
         };
     }
 
@@ -122,11 +122,11 @@ public sealed class ModuleFile
 
     public ImmutableArray<ModuleSample> Samples { get; init; }
 
-    public ImmutableArray<byte[]> SampleData { get; init; }
+    public ImmutableArray<sbyte[]> SampleData { get; init; }
 
     public ImmutableArray<ModulePattern> Patterns { get; init; }
 
-    public ImmutableArray<byte> Positions { get; init; }
+    public ImmutableArray<byte> Sequence { get; init; }
 }
 
 public static class SequenceReaderExtensions
