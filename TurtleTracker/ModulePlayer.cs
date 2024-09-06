@@ -4,13 +4,6 @@ using Silk.NET.SDL;
 
 public sealed class ModulePlayer
 {
-    private readonly Sdl Sdl = SdlProvider.SDL.Value;
-    private readonly AudioSpec audioSpec;
-    private readonly ModuleFile module;
-
-    private uint audioDevice;
-
-
     public unsafe ModulePlayer(ModuleFile module)
     {
         audioSpec = new AudioSpec
@@ -27,10 +20,27 @@ public sealed class ModulePlayer
         Sdl.ThrowError();
     }
 
-    // THE PERIOD BETWEEN DIVISONS 
-    // IS 1/50th OF A SECOND (ONE TICK)
-    // WHEN THE TEMPO IS 125
-    // I THINK
+    private readonly Sdl Sdl = SdlProvider.SDL.Value;
+    private readonly AudioSpec audioSpec;
+    private readonly ModuleFile module;
+
+    private uint audioDevice;
+
+    private int speed = 6;
+    private ModulePattern pattern;
+    private ModuleDivision division;
+
+    private record struct ChannelState(
+        sbyte[] AudioBuffer, 
+        ModuleSample Sample = default!,
+        sbyte[] SampleData = default!,
+        short Period = 0,
+        int SamplePosition = 0);
+
+    private ChannelState channel1 = new(new sbyte[882]);
+    private ChannelState channel2 = new(new sbyte[882]);
+    private ChannelState channel3 = new(new sbyte[882]);
+    private ChannelState channel4 = new(new sbyte[882]);
 
     public void Play()
     {
@@ -42,72 +52,81 @@ public sealed class ModulePlayer
         Sdl.PauseAudioDevice(audioDevice, 0);
         Sdl.ThrowError();
 
-        var renderedSamples = new sbyte[882];
-
-        var speed = 6;
-        int lastSampleOffset = 0;
+        var outputBuffer = new sbyte[882];
 
         foreach (var currentPattern in module.Sequence)
         {
-            var pattern = module.Patterns[currentPattern];
+            pattern = module.Patterns[currentPattern];
 
-            ModuleSample currentSample = default!;
-            sbyte[] currentSampleData = default!;
-            short currentPeriod = 0;
-
-            for (int currentDivision = 0; currentDivision < 64; currentDivision++)
+            foreach (var currentDivision in pattern.Divisions)
             {
-                ModuleDivision division = pattern.Divisions[currentDivision];
-                var (sampleNumber, samplePeriod, effectCommand) = division.Channel2;
-
-                if (sampleNumber != 0)
-                {
-                    currentSample = module.Samples[sampleNumber - 1];
-                    currentSampleData = module.SampleData[sampleNumber - 1];
-                    lastSampleOffset = 0;
-                }
-
-                if (samplePeriod != 0)
-                {
-                    currentPeriod = samplePeriod;
-                    lastSampleOffset = 0;
-                }
+                division = currentDivision;
+                UpdateChannel(ref channel1, division.Channel1);
+                UpdateChannel(ref channel2, division.Channel2);
+                UpdateChannel(ref channel3, division.Channel3);
+                UpdateChannel(ref channel4, division.Channel4);
 
                 for (int i = 0; i < speed; i++)
                 {
-                    if (currentPeriod != 0)
+                    RenderChannel(ref channel1);
+                    RenderChannel(ref channel2);
+                    RenderChannel(ref channel3);
+                    RenderChannel(ref channel4);
+
+                    for (int j = 0; j < outputBuffer.Length; j++)
                     {
-                        lastSampleOffset = RenderSample(
-                            currentSample, 
-                            currentSampleData, 
-                            currentPeriod, 
-                            lastSampleOffset, 
-                            renderedSamples);
+                        outputBuffer[j] = sbyte.CreateSaturating(
+                            channel1.AudioBuffer[j] + 
+                            channel2.AudioBuffer[j] + 
+                            channel3.AudioBuffer[j] + 
+                            channel4.AudioBuffer[j]);
                     }
 
-                    Sdl.QueueAudio<sbyte>(audioDevice, renderedSamples, (uint)renderedSamples.Length);
-                    // System.Threading.Thread.Sleep(20);
+                    Sdl.QueueAudio<sbyte>(audioDevice, outputBuffer, (uint)outputBuffer.Length);
                 }
             }
         }
     }
 
-    private static int RenderSample(ModuleSample sample, ReadOnlySpan<sbyte> sampleData, int period, int startOffset, Span<sbyte> @out)
+    private void UpdateChannel(ref ChannelState channel, ModuleNote note)
     {
-        @out.Clear();
+        var (sampleNumber, samplePeriod, effectCommand) = note;
+
+        if (sampleNumber != 0)
+        {
+            channel.Sample = module.Samples[sampleNumber - 1];
+            channel.SampleData = module.SampleData[sampleNumber - 1];
+            channel.SamplePosition = 0;
+        }
+
+        if (samplePeriod != 0)
+        {
+            channel.Period = samplePeriod;
+            channel.SamplePosition = 0;
+        }
+    }
+
+    private static void RenderChannel(ref ChannelState channel)
+    {
+        var (outputBuffer, sample, sampleData, period, samplePosition) = channel;
+
+        if (period == 0)
+        {
+            return;
+        }
 
         if (sampleData.Length == 0)
         {
-            return 0;
+            return;
         }
 
         var sampleRate = (int)(7159090.5 / (period * 2));
         var ratio = sampleRate / 44100.0;
 
-        int resampledOffset = startOffset;
+        int resampledOffset = samplePosition;
         bool looped = false;
 
-        for (int i = 0; i < @out.Length; i++)
+        for (int i = 0; i < outputBuffer.Length; i++)
         {
             double interpolatedPoint;
             int lowerSample;
@@ -141,7 +160,7 @@ public sealed class ModulePlayer
 
             var percent = interpolatedPoint - lowerSample;
             var interpolatedSample = double.Lerp(sampleData[lowerSample], sampleData[upperSample], percent);
-            @out[i] = (sbyte)interpolatedSample;
+            outputBuffer[i] = (sbyte)interpolatedSample;
 
             if (looped && resampledOffset == (int)((sample.LoopOffsetStart + sample.LoopOffsetLength) * 2 / ratio))
             {
@@ -153,6 +172,6 @@ public sealed class ModulePlayer
             }
         }
 
-        return resampledOffset;
+        channel.SamplePosition = resampledOffset;
     }
 }
