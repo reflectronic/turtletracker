@@ -1,5 +1,6 @@
 namespace TurtleTracker;
 
+using System.Threading.Channels;
 using Silk.NET.SDL;
 
 public sealed class ModulePlayer
@@ -35,7 +36,8 @@ public sealed class ModulePlayer
         ModuleSample Sample = default!,
         sbyte[] SampleData = default!,
         short Period = 0,
-        int SamplePosition = 0);
+        double SamplePosition = 0,
+        bool Looping = false);
 
     private ChannelState channel1 = new(new sbyte[882]);
     private ChannelState channel2 = new(new sbyte[882]);
@@ -97,21 +99,23 @@ public sealed class ModulePlayer
             channel.Sample = module.Samples[sampleNumber - 1];
             channel.SampleData = module.SampleData[sampleNumber - 1];
             channel.SamplePosition = 0;
+            channel.Looping = false;
         }
 
         if (samplePeriod != 0)
         {
             channel.Period = samplePeriod;
             channel.SamplePosition = 0;
+            channel.Looping = false;
         }
     }
 
     private static void RenderChannel(ref ChannelState channel)
     {
-        var (outputBuffer, sample, sampleData, period, samplePosition) = channel;
+        var (outputData, sample, sampleData, period, _, _) = channel;
 
         if (period == 0)
-        {
+        { 
             return;
         }
 
@@ -123,55 +127,33 @@ public sealed class ModulePlayer
         var sampleRate = (int)(7159090.5 / (period * 2));
         var ratio = sampleRate / 44100.0;
 
-        int resampledOffset = samplePosition;
-        bool looped = false;
+        var sampleLength = sample.Length * 2;
+        var loopPointStart = sample.LoopOffsetStart * 2;
+        var loopPointEnd = loopPointStart + sample.LoopOffsetLength * 2;
 
-        for (int i = 0; i < outputBuffer.Length; i++)
+        Array.Clear(outputData);
+
+        for (int i = 0; i < outputData.Length; i++)
         {
-            double interpolatedPoint;
-            int lowerSample;
-            int upperSample;
-
-            int ToResampledIndex(int sampleOffset) => (int)(sampleOffset / ratio);
-
-            void SetInterpolatedPoint()
+            var sampledPosition = (int)channel.SamplePosition;
+            if (sampledPosition >= sampleLength)
             {
-                interpolatedPoint = resampledOffset * ratio;
-                lowerSample = (int)double.Floor(interpolatedPoint);
-                upperSample = (int)double.Ceiling(interpolatedPoint);   
-            }
-
-
-            SetInterpolatedPoint();
-
-            if (upperSample >= sampleData.Length)
-            {
-                if (sample.LoopOffsetStart > 1)
-                {
-                    looped = true;
-                    resampledOffset = ToResampledIndex(sample.LoopOffsetStart * 2);
-                    SetInterpolatedPoint();
-                }
-                else
+                if (sample.LoopOffsetLength < 1)
                 {
                     break;
                 }
+
+                channel.Looping = true;
             }
 
-            var percent = interpolatedPoint - lowerSample;
-            var interpolatedSample = double.Lerp(sampleData[lowerSample], sampleData[upperSample], percent);
-            outputBuffer[i] = (sbyte)interpolatedSample;
+            if (channel.Looping && sampledPosition >= loopPointEnd)
+            {
+                channel.SamplePosition = loopPointStart;
+                sampledPosition = loopPointStart;
+            }
 
-            if (looped && resampledOffset == (int)((sample.LoopOffsetStart + sample.LoopOffsetLength) * 2 / ratio))
-            {
-                resampledOffset = ToResampledIndex(sample.LoopOffsetStart * 2);
-            }
-            else
-            {
-                resampledOffset++;
-            }
+            outputData[i] = sampleData[sampledPosition];
+            channel.SamplePosition += ratio;
         }
-
-        channel.SamplePosition = resampledOffset;
     }
 }
