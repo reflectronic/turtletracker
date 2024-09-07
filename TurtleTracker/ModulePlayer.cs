@@ -10,9 +10,8 @@ public sealed class ModulePlayer
         audioSpec = new AudioSpec
         {
             Channels = 1,
-            Samples = 1024,
             Freq = 44100,
-            Format = Sdl.AudioS8
+            Format = Sdl.AudioF32
         };
 
         this.module = module;
@@ -32,17 +31,17 @@ public sealed class ModulePlayer
     private ModuleDivision division;
 
     private record struct ChannelState(
-        sbyte[] AudioBuffer, 
+        float[] AudioBuffer, 
         ModuleSample Sample = default!,
         sbyte[] SampleData = default!,
         short Period = 0,
         double SamplePosition = 0,
         bool Looping = false);
 
-    private ChannelState channel1 = new(new sbyte[882]);
-    private ChannelState channel2 = new(new sbyte[882]);
-    private ChannelState channel3 = new(new sbyte[882]);
-    private ChannelState channel4 = new(new sbyte[882]);
+    private ChannelState channel1 = new(new float[882]);
+    private ChannelState channel2 = new(new float[882]);
+    private ChannelState channel3 = new(new float[882]);
+    private ChannelState channel4 = new(new float[882]);
 
     public void Play()
     {
@@ -54,7 +53,7 @@ public sealed class ModulePlayer
         Sdl.PauseAudioDevice(audioDevice, 0);
         Sdl.ThrowError();
 
-        var outputBuffer = new sbyte[882];
+        var outputBuffer = new float[882];
 
         foreach (var currentPattern in module.Sequence)
         {
@@ -77,14 +76,15 @@ public sealed class ModulePlayer
 
                     for (int j = 0; j < outputBuffer.Length; j++)
                     {
-                        outputBuffer[j] = sbyte.CreateSaturating(
+                        outputBuffer[j] = float.Clamp(
                             channel1.AudioBuffer[j] + 
                             channel2.AudioBuffer[j] + 
                             channel3.AudioBuffer[j] + 
-                            channel4.AudioBuffer[j]);
+                            channel4.AudioBuffer[j],
+                            min: -1, max: 1);
                     }
 
-                    Sdl.QueueAudio<sbyte>(audioDevice, outputBuffer, (uint)outputBuffer.Length);
+                    Sdl.QueueAudio<float>(audioDevice, outputBuffer, (uint)outputBuffer.Length * 4);
                 }
             }
         }
@@ -124,7 +124,7 @@ public sealed class ModulePlayer
             return;
         }
 
-        var sampleRate = (int)(7159090.5 / (period * 2));
+        var sampleRate = 7159090.5 / (period * 2);
         var ratio = sampleRate / 44100.0;
 
         var sampleLength = sample.Length * 2;
@@ -152,7 +152,7 @@ public sealed class ModulePlayer
                 sampledPosition = loopPointStart;
             }
 
-            outputData[i] = sampleData[sampledPosition];
+            outputData[i] = sampleData[sampledPosition] / 128f;
             channel.SamplePosition += ratio;
         }
     }
