@@ -179,7 +179,12 @@ public sealed record ModuleSample(
     short LoopOffsetStart,
     short LoopOffsetLength);
 
-public readonly record struct ModuleNote(byte Sample, short SamplePeriod, short EffectCommand);
+public readonly record struct ModuleNote(byte Sample, short SamplePeriod, short EffectCommand)
+{
+    public byte Effect => (byte)((EffectCommand >> 8) & 0xF);
+    public byte EffectParameter1 => (byte)((EffectCommand >> 4) & 0xF);
+    public byte EffectParameter2 => (byte)((EffectCommand >> 8) & 0xF);
+}
 
 public sealed record ModuleDivision(
     ModuleNote Channel1,

@@ -69,10 +69,10 @@ public sealed class ModulePlayer
 
                 for (int i = 0; i < speed; i++)
                 {
-                    RenderChannel(ref channel1);
-                    RenderChannel(ref channel2);
-                    RenderChannel(ref channel3);
-                    RenderChannel(ref channel4);
+                    RenderChannel(ref channel1, division.Channel1);
+                    RenderChannel(ref channel2, division.Channel2);
+                    RenderChannel(ref channel3, division.Channel3);
+                    RenderChannel(ref channel4, division.Channel4);
 
                     for (int j = 0; j < outputBuffer.Length; j++)
                     {
@@ -110,8 +110,10 @@ public sealed class ModulePlayer
         }
     }
 
-    private static void RenderChannel(ref ChannelState channel)
+    private static void RenderChannel(ref ChannelState channel, ModuleNote note)
     {
+        ApplyEffect(ref channel, note);
+
         var (outputData, sample, sampleData, period, _, _) = channel;
 
         if (period == 0)
@@ -129,7 +131,8 @@ public sealed class ModulePlayer
 
         var sampleLength = sample.Length * 2;
         var loopPointStart = sample.LoopOffsetStart * 2;
-        var loopPointEnd = loopPointStart + sample.LoopOffsetLength * 2;
+        var loopLength =  sample.LoopOffsetLength * 2;
+        var loopPointEnd = loopPointStart + loopLength;
 
         Array.Clear(outputData);
 
@@ -148,12 +151,38 @@ public sealed class ModulePlayer
 
             if (channel.Looping && sampledPosition >= loopPointEnd)
             {
-                channel.SamplePosition = loopPointStart;
-                sampledPosition = loopPointStart;
+                var newStart = loopPointStart + ((sampledPosition - loopPointEnd) % loopLength);
+                channel.SamplePosition = newStart;
+                sampledPosition = newStart;
             }
 
             outputData[i] = sampleData[sampledPosition] / 128f;
             channel.SamplePosition += ratio;
+        }
+    }
+
+    private static void ApplyEffect(ref ChannelState channel, ModuleNote note)
+    {
+        switch (note.Effect)
+        {
+            case 0:
+                break;
+
+            case 1: // Slide Up
+                channel.Period = short.Max(
+                    (short)(channel.Period - (note.EffectParameter1 * 16 + note.EffectParameter2)), 
+                    113);
+                break;
+
+            case 2: // Slide Down
+                channel.Period = short.Min(
+                    (short)(channel.Period + (note.EffectParameter1 * 16 + note.EffectParameter2)), 
+                    856);
+                break;
+
+            default:
+                Console.WriteLine($"Unsupported effect {note.Effect}.");
+                break;
         }
     }
 }
