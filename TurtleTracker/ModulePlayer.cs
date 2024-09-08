@@ -1,7 +1,6 @@
 namespace TurtleTracker;
 
-using System.Runtime.CompilerServices;
-using System.Threading.Channels;
+using System.Numerics;
 using Silk.NET.SDL;
 
 public sealed class ModulePlayer
@@ -37,14 +36,19 @@ public sealed class ModulePlayer
         sbyte[] SampleData = default!,
         short Period = 0)
     {
-        public double SamplePosition { get; set; }
+        public float[] AudioBuffer = AudioBuffer;
 
-        public bool Looping { get; set; }
+        public ModuleSample Sample = Sample;
+        public sbyte[] SampleData = SampleData;
 
-        public short SlideToPeriod { get; set; }
+        public short Period = Period;
+        public double SamplePosition;
+        public bool Looping;
 
-        public byte SlideToX { get; set; }
-        public byte SlideToY { get; set; }
+        public short SlideToPeriod;
+        public byte SlideAmount;
+        
+        public byte Volume;
     };
 
     private ChannelState channel1 = new(new float[882]);
@@ -78,10 +82,11 @@ public sealed class ModulePlayer
 
                 for (int i = 0; i < speed; i++)
                 {
-                    RenderChannel(ref channel1, division.Channel1);
-                    RenderChannel(ref channel2, division.Channel2);
-                    RenderChannel(ref channel3, division.Channel3);
-                    RenderChannel(ref channel4, division.Channel4);
+                    var firstTick = i == 0;
+                    RenderChannel(ref channel1, division.Channel1, firstTick);
+                    RenderChannel(ref channel2, division.Channel2, firstTick);
+                    RenderChannel(ref channel3, division.Channel3, firstTick);
+                    RenderChannel(ref channel4, division.Channel4, firstTick);
 
                     for (int j = 0; j < outputBuffer.Length; j++)
                     {
@@ -109,6 +114,7 @@ public sealed class ModulePlayer
             channel.SampleData = module.SampleData[sampleNumber - 1];
             channel.SamplePosition = 0;
             channel.Looping = false;
+            channel.Volume = channel.Sample.Volume;
         }
 
         if (samplePeriod != 0)
@@ -118,8 +124,7 @@ public sealed class ModulePlayer
                 channel.SlideToPeriod = samplePeriod;
                 if (note.EffectParameter1 != 0 || note.EffectParameter2 != 0)
                 {
-                    channel.SlideToX = note.EffectParameter1;
-                    channel.SlideToY = note.EffectParameter2;
+                    channel.SlideAmount = note.EffectParameter;
                 }
             }
             else
@@ -131,9 +136,9 @@ public sealed class ModulePlayer
         }
     }
 
-    private static void RenderChannel(ref ChannelState channel, ModuleNote note)
+    private static void RenderChannel(ref ChannelState channel, ModuleNote note, bool firstTick)
     {
-        ApplyEffect(ref channel, note);
+        ApplyEffect(ref channel, note, firstTick);
 
         var (outputData, sample, sampleData, period) = channel;
 
@@ -177,53 +182,56 @@ public sealed class ModulePlayer
                 sampledPosition = newStart;
             }
 
-            outputData[i] = sampleData[sampledPosition] / 128f;
+            outputData[i] = sampleData[sampledPosition]  * (channel.Volume / 64f) / 128f;
             channel.SamplePosition += ratio;
         }
     }
 
-    private static void ApplyEffect(ref ChannelState channel, ModuleNote note)
+    private static void ApplyEffect(ref ChannelState channel, ModuleNote note, bool firstTick)
     {
+        void AddWithMax<T>(ref T value, T increment, T max) where T : INumber<T>
+        {
+            var saturatedSum = T.CreateSaturating(int.CreateTruncating(value) + int.CreateTruncating(increment));
+            value = T.Min(saturatedSum, max);
+        }
+
+        void SubtractWithMin<T>(ref T value, T decrement, T min) where T : INumber<T>
+        {
+            var saturatedDifference = T.CreateSaturating(int.CreateTruncating(value) - int.CreateTruncating(decrement));
+            value = T.Max(saturatedDifference, min);
+        }
+
         switch (note.Effect)
         {
-            case 0:
+            case ModuleEffect.Arpeggio:
                 break;
 
-            case ModuleEffect.PortamentoUp:
-                static void PeriodDown(ref ChannelState channel, byte x, byte y, short max)
-                {
-                    channel.Period = short.Max(
-                        (short)(channel.Period - (x * 16 + y)), 
-                        max);
-                }
-
-                PeriodDown(ref channel, note.EffectParameter1, note.EffectParameter2, 113);
+            case ModuleEffect.PortamentoUp when !firstTick:
+                SubtractWithMin<short>(ref channel.Period, note.EffectParameter, 113);
                 break;
 
-            case ModuleEffect.PortamentoDown:
-                static void PeriodUp(ref ChannelState channel, byte x, byte y, short min)
-                {
-                    channel.Period = short.Min(
-                        (short)(channel.Period + (x * 16 + y)), 
-                        min);
-                }
-
-                PeriodUp(ref channel, note.EffectParameter1, note.EffectParameter2, 856);
+            case ModuleEffect.PortamentoDown when !firstTick:
+                AddWithMax<short>(ref channel.Period, note.EffectParameter, 856);
                 break;
 
-            case ModuleEffect.TonePortamento:
+            case ModuleEffect.TonePortamento when !firstTick:
                 if (channel.Period < channel.SlideToPeriod)
-                {
-                    PeriodUp(ref channel, channel.SlideToX, channel.SlideToY, channel.SlideToPeriod);
-                }
+                    AddWithMax(ref channel.Period, channel.SlideAmount, channel.SlideToPeriod);
                 else
-                {
-                    PeriodDown(ref channel, channel.SlideToX, channel.SlideToY, channel.SlideToPeriod);
-                }
+                    SubtractWithMin(ref channel.Period, channel.SlideAmount, channel.SlideToPeriod);
+
                 break;
 
-            default:
-                Console.WriteLine($"Unsupported effect {note.Effect} ({(int)note.Effect:X}).");
+            case ModuleEffect.VolumeSlide when !firstTick:
+                if (note.EffectParameter1 != 0)
+                    AddWithMax<byte>(ref channel.Volume, note.EffectParameter1, 64);
+                else if (note.EffectParameter2 != 0)
+                    SubtractWithMin<byte>(ref channel.Volume, note.EffectParameter2, 0);
+
+                break;
+
+            case ModuleEffect.SetVolume:
+                channel.Volume = byte.Clamp(note.EffectParameter, 0, 64);
                 break;
         }
     }

@@ -182,6 +182,7 @@ public sealed record ModuleSample(
 public readonly record struct ModuleNote(byte Sample, short SamplePeriod, short EffectCommand)
 {
     public ModuleEffect Effect => (ModuleEffect)((EffectCommand >> 8) & 0xF);
+    public byte EffectParameter => (byte)(EffectCommand & 0xFF);
     public byte EffectParameter1 => (byte)((EffectCommand >> 4) & 0xF);
     public byte EffectParameter2 => (byte)(EffectCommand & 0xF);
 }
