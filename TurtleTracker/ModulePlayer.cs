@@ -1,5 +1,6 @@
 namespace TurtleTracker;
 
+using System.Runtime.CompilerServices;
 using System.Threading.Channels;
 using Silk.NET.SDL;
 
@@ -34,9 +35,17 @@ public sealed class ModulePlayer
         float[] AudioBuffer, 
         ModuleSample Sample = default!,
         sbyte[] SampleData = default!,
-        short Period = 0,
-        double SamplePosition = 0,
-        bool Looping = false);
+        short Period = 0)
+    {
+        public double SamplePosition { get; set; }
+
+        public bool Looping { get; set; }
+
+        public short SlideToPeriod { get; set; }
+
+        public byte SlideToX { get; set; }
+        public byte SlideToY { get; set; }
+    };
 
     private ChannelState channel1 = new(new float[882]);
     private ChannelState channel2 = new(new float[882]);
@@ -104,9 +113,21 @@ public sealed class ModulePlayer
 
         if (samplePeriod != 0)
         {
-            channel.Period = samplePeriod;
-            channel.SamplePosition = 0;
-            channel.Looping = false;
+            if (note.Effect == ModuleEffect.TonePortamento)
+            {
+                channel.SlideToPeriod = samplePeriod;
+                if (note.EffectParameter1 != 0 || note.EffectParameter2 != 0)
+                {
+                    channel.SlideToX = note.EffectParameter1;
+                    channel.SlideToY = note.EffectParameter2;
+                }
+            }
+            else
+            {
+                channel.Period = samplePeriod;
+                channel.SamplePosition = 0;
+                channel.Looping = false;
+            }
         }
     }
 
@@ -114,7 +135,7 @@ public sealed class ModulePlayer
     {
         ApplyEffect(ref channel, note);
 
-        var (outputData, sample, sampleData, period, _, _) = channel;
+        var (outputData, sample, sampleData, period) = channel;
 
         if (period == 0)
         { 
@@ -168,20 +189,41 @@ public sealed class ModulePlayer
             case 0:
                 break;
 
-            case 1: // Slide Up
-                channel.Period = short.Max(
-                    (short)(channel.Period - (note.EffectParameter1 * 16 + note.EffectParameter2)), 
-                    113);
+            case ModuleEffect.PortamentoUp:
+                static void PeriodDown(ref ChannelState channel, byte x, byte y, short max)
+                {
+                    channel.Period = short.Max(
+                        (short)(channel.Period - (x * 16 + y)), 
+                        max);
+                }
+
+                PeriodDown(ref channel, note.EffectParameter1, note.EffectParameter2, 113);
                 break;
 
-            case 2: // Slide Down
-                channel.Period = short.Min(
-                    (short)(channel.Period + (note.EffectParameter1 * 16 + note.EffectParameter2)), 
-                    856);
+            case ModuleEffect.PortamentoDown:
+                static void PeriodUp(ref ChannelState channel, byte x, byte y, short min)
+                {
+                    channel.Period = short.Min(
+                        (short)(channel.Period + (x * 16 + y)), 
+                        min);
+                }
+
+                PeriodUp(ref channel, note.EffectParameter1, note.EffectParameter2, 856);
+                break;
+
+            case ModuleEffect.TonePortamento:
+                if (channel.Period < channel.SlideToPeriod)
+                {
+                    PeriodUp(ref channel, channel.SlideToX, channel.SlideToY, channel.SlideToPeriod);
+                }
+                else
+                {
+                    PeriodDown(ref channel, channel.SlideToX, channel.SlideToY, channel.SlideToPeriod);
+                }
                 break;
 
             default:
-                Console.WriteLine($"Unsupported effect {note.Effect}.");
+                Console.WriteLine($"Unsupported effect {note.Effect} ({(int)note.Effect:X}).");
                 break;
         }
     }

@@ -181,9 +181,29 @@ public sealed record ModuleSample(
 
 public readonly record struct ModuleNote(byte Sample, short SamplePeriod, short EffectCommand)
 {
-    public byte Effect => (byte)((EffectCommand >> 8) & 0xF);
+    public ModuleEffect Effect => (ModuleEffect)((EffectCommand >> 8) & 0xF);
     public byte EffectParameter1 => (byte)((EffectCommand >> 4) & 0xF);
-    public byte EffectParameter2 => (byte)((EffectCommand >> 8) & 0xF);
+    public byte EffectParameter2 => (byte)(EffectCommand & 0xF);
+}
+
+public enum ModuleEffect
+{
+    Arpeggio = 0x0,
+    PortamentoUp = 0x1,
+    PortamentoDown = 0x2,
+    TonePortamento = 0x3,
+    Vibrato = 0x4,
+    VolumeSlideAndTonePortamento = 0x5,
+    VolumeSlideAndVibrato = 0x6,
+    Tremolo = 0x7,
+    SetPanning = 0x8,
+    SetOffset = 0x9,
+    VolumeSlide = 0xA,
+    PositionJump = 0xB,
+    SetVolume = 0xC,
+    PatternBreak = 0xD,
+    Extended = 0xE,
+    SetTempo = 0xF,
 }
 
 public sealed record ModuleDivision(
