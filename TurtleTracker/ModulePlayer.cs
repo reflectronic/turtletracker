@@ -27,8 +27,11 @@ public sealed class ModulePlayer
     private uint audioDevice;
 
     private int speed = 6;
-    private ModulePattern pattern;
-    private ModuleDivision division;
+    private int patternPosition;
+    private int divisionPosition;
+
+    private ModulePattern Pattern => module.Patterns[module.Sequence[patternPosition]];
+    private ModuleDivision Division => Pattern.Divisions[divisionPosition];
 
     private record struct ChannelState(
         float[] AudioBuffer, 
@@ -45,7 +48,7 @@ public sealed class ModulePlayer
         public double SamplePosition;
         public bool Looping;
 
-        public short SlideToPeriod;
+        public short NotePeriod;
         public byte SlideAmount;
         
         public byte Volume;
@@ -68,13 +71,12 @@ public sealed class ModulePlayer
 
         var outputBuffer = new float[882];
 
-        foreach (var currentPattern in module.Sequence)
+        for (patternPosition = 0; patternPosition < module.Sequence.Length; patternPosition++)
         {
-            pattern = module.Patterns[currentPattern];
-
-            foreach (var currentDivision in pattern.Divisions)
+            for (divisionPosition = 0; divisionPosition < Pattern.Divisions.Length;)
             {
-                division = currentDivision;
+                var division = Division;
+
                 UpdateChannel(ref channel1, division.Channel1);
                 UpdateChannel(ref channel2, division.Channel2);
                 UpdateChannel(ref channel3, division.Channel3);
@@ -91,14 +93,47 @@ public sealed class ModulePlayer
                     for (int j = 0; j < outputBuffer.Length; j++)
                     {
                         outputBuffer[j] = float.Clamp(
-                            channel1.AudioBuffer[j] + 
-                            channel2.AudioBuffer[j] + 
-                            channel3.AudioBuffer[j] + 
+                            channel1.AudioBuffer[j] +
+                            channel2.AudioBuffer[j] +
+                            channel3.AudioBuffer[j] +
                             channel4.AudioBuffer[j],
                             min: -1, max: 1);
                     }
 
+                    SpinWait.SpinUntil(() => Sdl.GetQueuedAudioSize(audioDevice) < 882 * 50);
                     Sdl.QueueAudio<float>(audioDevice, outputBuffer, (uint)outputBuffer.Length * 4);
+                }
+
+                int newPatternPosition;
+                var positionJump = IsPositionJump(division.Channel1, out newPatternPosition) ||
+                                    IsPositionJump(division.Channel2, out newPatternPosition) ||
+                                    IsPositionJump(division.Channel3, out newPatternPosition) ||
+                                    IsPositionJump(division.Channel4, out newPatternPosition);
+
+                int newDivisionPosition;
+                var patternBreak = IsPatternBreak(division.Channel1, out newDivisionPosition) ||
+                                    IsPatternBreak(division.Channel2, out newDivisionPosition) ||
+                                    IsPatternBreak(division.Channel3, out newDivisionPosition) ||
+                                    IsPatternBreak(division.Channel4, out newDivisionPosition);
+
+                if (!patternBreak && !positionJump)
+                {
+                    divisionPosition++;
+                }
+                else if (!patternBreak && positionJump)
+                {
+                    divisionPosition = 0;
+                    patternPosition = newPatternPosition;
+                }
+                else if (patternBreak && !positionJump)
+                {
+                    divisionPosition = newDivisionPosition;
+                    patternPosition = (patternPosition + 1) % module.Sequence.Length;
+                }
+                else if (patternBreak && positionJump)
+                {
+                    divisionPosition = newDivisionPosition;
+                    patternPosition = newPatternPosition;
                 }
             }
         }
@@ -106,7 +141,7 @@ public sealed class ModulePlayer
 
     private void UpdateChannel(ref ChannelState channel, ModuleNote note)
     {
-        var (sampleNumber, samplePeriod, effectCommand) = note;
+        var (sampleNumber, samplePeriod, _) = note;
 
         if (sampleNumber != 0)
         {
@@ -119,9 +154,10 @@ public sealed class ModulePlayer
 
         if (samplePeriod != 0)
         {
+            channel.NotePeriod = samplePeriod;
+
             if (note.Effect == ModuleEffect.TonePortamento)
             {
-                channel.SlideToPeriod = samplePeriod;
                 if (note.EffectParameter1 != 0 || note.EffectParameter2 != 0)
                 {
                     channel.SlideAmount = note.EffectParameter;
@@ -215,11 +251,15 @@ public sealed class ModulePlayer
                 break;
 
             case ModuleEffect.TonePortamento when !firstTick:
-                if (channel.Period < channel.SlideToPeriod)
-                    AddWithMax(ref channel.Period, channel.SlideAmount, channel.SlideToPeriod);
+                if (channel.Period < channel.NotePeriod)
+                    AddWithMax(ref channel.Period, channel.SlideAmount, channel.NotePeriod);
                 else
-                    SubtractWithMin(ref channel.Period, channel.SlideAmount, channel.SlideToPeriod);
+                    SubtractWithMin(ref channel.Period, channel.SlideAmount, channel.NotePeriod);
 
+                break;
+
+            case ModuleEffect.SetOffset:
+                channel.SamplePosition = note.EffectParameter * 256;
                 break;
 
             case ModuleEffect.VolumeSlide when !firstTick:
@@ -235,4 +275,29 @@ public sealed class ModulePlayer
                 break;
         }
     }
+
+    private static bool IsPositionJump(ModuleNote note, out int sequenceNumber)
+    {
+        if (note.Effect == ModuleEffect.PositionJump)
+        {
+            sequenceNumber = note.EffectParameter;
+            return true;
+        }
+        
+        sequenceNumber = 0;
+        return false;
+    }
+
+    private static bool IsPatternBreak(ModuleNote note, out int currentDivision)
+    {
+        if (note.Effect == ModuleEffect.PatternBreak)
+        {
+            currentDivision = note.EffectParameter;
+            return true;
+        }
+
+        currentDivision = 0;
+        return false;
+    }
+
 }
