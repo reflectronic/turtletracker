@@ -50,6 +50,9 @@ public sealed class ModulePlayer
 
         public short NotePeriod;
         public byte SlideAmount;
+
+        public sbyte VibratoAmount;
+        public sbyte SampleFinetune;
         
         public byte Volume;
     };
@@ -149,6 +152,7 @@ public sealed class ModulePlayer
             channel.SamplePosition = 0;
             channel.Looping = false;
             channel.Volume = channel.Sample.Volume;
+            channel.SampleFinetune = channel.Sample.Finetune;
         }
 
         if (samplePeriod != 0)
@@ -187,9 +191,6 @@ public sealed class ModulePlayer
             return;
         }
 
-        var sampleRate = 7159090.5 / (period * 2);
-        var ratio = sampleRate / 44100.0;
-
         var sampleLength = sample.Length * 2;
         var loopPointStart = sample.LoopOffsetStart * 2;
         var loopLength =  sample.LoopOffsetLength * 2;
@@ -217,7 +218,14 @@ public sealed class ModulePlayer
                 sampledPosition = newStart;
             }
 
-            outputData[i] = sampleData[sampledPosition]  * (channel.Volume / 64f) / 128f;
+            var volumeAdjustment = channel.Volume / 64f;
+            outputData[i] = sampleData[sampledPosition] * volumeAdjustment / 128f;
+
+            var semitoneAdjustment = channel.SampleFinetune / 8f + channel.VibratoAmount / 16f;
+            var finetuneAdjustment = float.Pow(2, semitoneAdjustment / 12f);
+            var sampleRate = 7159090.5 / (period * 2 / finetuneAdjustment);
+            var ratio = sampleRate / 44100.0;
+
             channel.SamplePosition += ratio;
         }
     }

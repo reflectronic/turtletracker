@@ -36,10 +36,22 @@ public sealed class ModuleFile
         {
             string sampleName = FromNullPadded(reader.Read(22));
             var sampleLength = reader.ReadInt16BigEndian();
-            var finetune = reader.ReadByte();
+            var finetune = ToSigned4Bit(reader.ReadByte());
             var volume = reader.ReadByte();
             var loopOffsetStart = reader.ReadInt16BigEndian();
             var loopOffsetLength = reader.ReadInt16BigEndian();
+
+            static sbyte ToSigned4Bit(byte raw8Bits)
+            {
+                if ((raw8Bits & 0b1000) == 0)
+                {
+                    return (sbyte)raw8Bits;
+                }
+                else 
+                {
+                    return (sbyte)(raw8Bits | 0xF0);
+                }
+            }
 
             samples.Add(new(
                 sampleName,
@@ -174,7 +186,7 @@ public static class SequenceReaderExtensions
 public sealed record ModuleSample(
     string Name,
     short Length,
-    byte Finetune,
+    sbyte Finetune,
     byte Volume,
     short LoopOffsetStart,
     short LoopOffsetLength);
