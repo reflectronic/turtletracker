@@ -92,12 +92,11 @@ public sealed class ModulePlayer
 
                     for (int j = 0; j < outputBuffer.Length; j++)
                     {
-                        outputBuffer[j] = float.Clamp(
-                            channel1.AudioBuffer[j] +
+                        outputBuffer[j] = 0.25f *
+                            (channel1.AudioBuffer[j] +
                             channel2.AudioBuffer[j] +
                             channel3.AudioBuffer[j] +
-                            channel4.AudioBuffer[j],
-                            min: -1, max: 1);
+                            channel4.AudioBuffer[j]);
                     }
 
                     SpinWait.SpinUntil(() => Sdl.GetQueuedAudioSize(audioDevice) < 882 * 50);
@@ -258,7 +257,7 @@ public sealed class ModulePlayer
 
                 break;
 
-            case ModuleEffect.SetOffset:
+            case ModuleEffect.SetOffset when firstTick:
                 channel.SamplePosition = note.EffectParameter * 256;
                 break;
 
@@ -292,7 +291,7 @@ public sealed class ModulePlayer
     {
         if (note.Effect == ModuleEffect.PatternBreak)
         {
-            currentDivision = note.EffectParameter;
+            currentDivision = note.EffectParameter1 * 10 + note.EffectParameter2;
             return true;
         }
 
