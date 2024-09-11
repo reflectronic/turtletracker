@@ -194,6 +194,7 @@ public sealed record ModuleSample(
 public readonly record struct ModuleNote(byte Sample, short SamplePeriod, short EffectCommand)
 {
     public ModuleEffect Effect => (ModuleEffect)((EffectCommand >> 8) & 0xF);
+    public ModuleExtendedEffect ExtendedEffect => (ModuleExtendedEffect)EffectParameter1;
     public byte EffectParameter => (byte)(EffectCommand & 0xFF);
     public byte EffectParameter1 => (byte)((EffectCommand >> 4) & 0xF);
     public byte EffectParameter2 => (byte)(EffectCommand & 0xF);
@@ -217,6 +218,25 @@ public enum ModuleEffect
     PatternBreak = 0xD,
     Extended = 0xE,
     SetTempo = 0xF,
+}
+
+public enum ModuleExtendedEffect
+{
+    FinePortamentoUp = 0x1,
+    FinePortamentoDown = 0x2,
+    GlissandoControl = 0x3,
+    SetVibratoWaveform = 0x4,
+    SetFinetune = 0x5,
+    PatternLoop = 0x6,
+    SetTremoloWaveform = 0x7,
+    SetPanning = 0x8,
+    Retrigger = 0x9,
+    FineVolumeSlideUp = 0xA,
+    FineVolumeSlideDown = 0xB,
+    NoteCut = 0xC,
+    NoteDelay = 0xD,
+    PatternDelay = 0xE,
+    InvertLoop = 0xF
 }
 
 public sealed record ModuleDivision(

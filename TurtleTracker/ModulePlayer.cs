@@ -45,17 +45,29 @@ public sealed class ModulePlayer
         public sbyte[] SampleData = SampleData;
 
         public short Period = Period;
-        public double SamplePosition;
+        public double Position;
+        public byte Volume;
+        public sbyte Finetune;
         public bool Looping;
 
         public short NotePeriod;
         public byte SlideAmount;
 
-        public sbyte VibratoAmount;
-        public sbyte SampleFinetune;
-        
-        public byte Volume;
+        public byte VibratoTicks;
+        public OscillatorWaveform VibratoWaveform;
+        public bool VibratoRetrigger;
+        public double VibratoAmount;
+        public byte VibratoSpeed;
+        public byte VibratoAmplitude;
     };
+
+    private enum OscillatorWaveform
+    {
+        Sine = 0,
+        Sawtooth = 1,
+        Square = 2,
+        Random = 3
+    }
 
     private ChannelState channel1 = new(new float[882]);
     private ChannelState channel2 = new(new float[882]);
@@ -145,32 +157,57 @@ public sealed class ModulePlayer
     {
         var (sampleNumber, samplePeriod, _) = note;
 
-        if (sampleNumber != 0)
+        if (note.Effect is ModuleEffect.TonePortamento or ModuleEffect.VolumeSlideAndTonePortamento)
         {
-            channel.Sample = module.Samples[sampleNumber - 1];
-            channel.SampleData = module.SampleData[sampleNumber - 1];
-            channel.SamplePosition = 0;
-            channel.Looping = false;
-            channel.Volume = channel.Sample.Volume;
-            channel.SampleFinetune = channel.Sample.Finetune;
-        }
-
-        if (samplePeriod != 0)
-        {
-            channel.NotePeriod = samplePeriod;
-
-            if (note.Effect == ModuleEffect.TonePortamento)
+            if (samplePeriod != 0)
             {
+                channel.NotePeriod = samplePeriod;   
                 if (note.EffectParameter1 != 0 || note.EffectParameter2 != 0)
                 {
                     channel.SlideAmount = note.EffectParameter;
                 }
             }
-            else
+
+            return;
+        }
+
+        if (note.Effect == ModuleEffect.Vibrato)
+        {
+            if (note.EffectParameter1 != 0)
             {
-                channel.Period = samplePeriod;
-                channel.SamplePosition = 0;
-                channel.Looping = false;
+                channel.VibratoSpeed = note.EffectParameter1;
+            } 
+            
+            if (note.EffectParameter2 != 0)
+            {
+                channel.VibratoAmplitude = note.EffectParameter2;
+            }
+        }
+        else
+        {
+            channel.VibratoAmount = 0;
+        }
+
+        if (sampleNumber != 0)
+        {
+            channel.Sample = module.Samples[sampleNumber - 1];
+            channel.SampleData = module.SampleData[sampleNumber - 1];
+            channel.Position = 0;
+            channel.Looping = false;
+            channel.Volume = channel.Sample.Volume;
+            channel.Finetune = channel.Sample.Finetune;
+        }
+
+        if (samplePeriod != 0)
+        {
+            channel.NotePeriod = samplePeriod;
+            channel.Period = samplePeriod;
+            channel.Position = 0;
+            channel.Looping = false;
+
+            if (channel.VibratoRetrigger)
+            {
+                channel.VibratoTicks = 0;
             }
         }
     }
@@ -193,14 +230,14 @@ public sealed class ModulePlayer
 
         var sampleLength = sample.Length * 2;
         var loopPointStart = sample.LoopOffsetStart * 2;
-        var loopLength =  sample.LoopOffsetLength * 2;
+        var loopLength = sample.LoopOffsetLength * 2;
         var loopPointEnd = loopPointStart + loopLength;
 
         Array.Clear(outputData);
 
         for (int i = 0; i < outputData.Length; i++)
         {
-            var sampledPosition = (int)channel.SamplePosition;
+            var sampledPosition = (int)channel.Position;
             if (sampledPosition >= sampleLength)
             {
                 if (sample.LoopOffsetLength < 1)
@@ -214,36 +251,38 @@ public sealed class ModulePlayer
             if (channel.Looping && sampledPosition >= loopPointEnd)
             {
                 var newStart = loopPointStart + ((sampledPosition - loopPointEnd) % loopLength);
-                channel.SamplePosition = newStart;
+                channel.Position = newStart;
                 sampledPosition = newStart;
             }
 
             var volumeAdjustment = channel.Volume / 64f;
             outputData[i] = sampleData[sampledPosition] * volumeAdjustment / 128f;
 
-            var semitoneAdjustment = channel.SampleFinetune / 8f + channel.VibratoAmount / 16f;
-            var finetuneAdjustment = float.Pow(2, semitoneAdjustment / 12f);
-            var sampleRate = 7159090.5 / (period * 2 / finetuneAdjustment);
+            var finetuneAdjustment = double.Pow(2, channel.Finetune / 96d);
+            var periodAdjustment = channel.VibratoAmount;
+            var sampleRate = 7093789.2 / ((period + periodAdjustment) * 2 / finetuneAdjustment);
             var ratio = sampleRate / 44100.0;
 
-            channel.SamplePosition += ratio;
+            channel.Position += ratio;
         }
+
+        channel.VibratoTicks++;
+    }
+
+    private static void AddWithMax<T>(ref T value, T increment, T max) where T : INumber<T>
+    {
+        var saturatedSum = T.CreateSaturating(int.CreateTruncating(value) + int.CreateTruncating(increment));
+        value = T.Min(saturatedSum, max);
+    }
+
+    private static void SubtractWithMin<T>(ref T value, T decrement, T min) where T : INumber<T>
+    {
+        var saturatedDifference = T.CreateSaturating(int.CreateTruncating(value) - int.CreateTruncating(decrement));
+        value = T.Max(saturatedDifference, min);
     }
 
     private static void ApplyEffect(ref ChannelState channel, ModuleNote note, bool firstTick)
     {
-        void AddWithMax<T>(ref T value, T increment, T max) where T : INumber<T>
-        {
-            var saturatedSum = T.CreateSaturating(int.CreateTruncating(value) + int.CreateTruncating(increment));
-            value = T.Min(saturatedSum, max);
-        }
-
-        void SubtractWithMin<T>(ref T value, T decrement, T min) where T : INumber<T>
-        {
-            var saturatedDifference = T.CreateSaturating(int.CreateTruncating(value) - int.CreateTruncating(decrement));
-            value = T.Max(saturatedDifference, min);
-        }
-
         switch (note.Effect)
         {
             case ModuleEffect.Arpeggio:
@@ -265,8 +304,26 @@ public sealed class ModulePlayer
 
                 break;
 
+            case ModuleEffect.Vibrato:
+            {
+                var waveformOffset = channel.VibratoTicks * channel.VibratoSpeed % 64;
+                var waveformPosition = waveformOffset / 64f;
+                double unitVibatoAmount = channel.VibratoWaveform switch
+                {
+                    OscillatorWaveform.Sine => double.SinPi(waveformPosition * 2),
+                    OscillatorWaveform.Sawtooth => double.Lerp(1, -1, waveformPosition),
+                    OscillatorWaveform.Square => waveformPosition < 0.5 ? 1 : -1,
+                    OscillatorWaveform.Random => Random.Shared.NextDouble() * 2 - 1,
+                    _ => throw new InvalidDataException(),
+                };
+
+                channel.VibratoAmount = (sbyte)(-unitVibatoAmount * channel.VibratoAmplitude * 2);
+
+                break;
+            }
+
             case ModuleEffect.SetOffset when firstTick:
-                channel.SamplePosition = note.EffectParameter * 256;
+                channel.Position = note.EffectParameter * 256;
                 break;
 
             case ModuleEffect.VolumeSlide when !firstTick:
@@ -280,6 +337,33 @@ public sealed class ModulePlayer
             case ModuleEffect.SetVolume:
                 channel.Volume = byte.Clamp(note.EffectParameter, 0, 64);
                 break;
+
+            case ModuleEffect.Extended:
+                ApplyExtendedEffect(ref channel, note, firstTick);
+                break;
+
+            case ModuleEffect.SetTempo:
+                break;
+        }
+    }
+
+    private static void ApplyExtendedEffect(ref ChannelState channel, ModuleNote note, bool firstTick)
+    {
+        switch (note.ExtendedEffect)
+        {
+            case ModuleExtendedEffect.FinePortamentoUp when firstTick:
+                SubtractWithMin<short>(ref channel.Period, note.EffectParameter, 113);
+                break;
+
+            case ModuleExtendedEffect.FinePortamentoDown when firstTick:
+                AddWithMax<short>(ref channel.Period, note.EffectParameter, 856);
+                break;
+
+            case ModuleExtendedEffect.SetVibratoWaveform:
+                channel.VibratoWaveform = (OscillatorWaveform)(note.EffectParameter2 & 0b11);
+                channel.VibratoRetrigger = (note.EffectParameter2 & 0b100) == 0;
+                break;
+            
         }
     }
 
