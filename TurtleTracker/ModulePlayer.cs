@@ -56,7 +56,7 @@ public sealed class ModulePlayer
         public byte VibratoTicks;
         public OscillatorWaveform VibratoWaveform;
         public bool VibratoRetrigger;
-        public double VibratoAmount;
+        public sbyte VibratoAmount;
         public byte VibratoSpeed;
         public byte VibratoAmplitude;
     };
@@ -160,41 +160,41 @@ public sealed class ModulePlayer
         switch (note.Effect)
         {
             case ModuleEffect.TonePortamento or ModuleEffect.VolumeSlideAndTonePortamento:
-            if (samplePeriod != 0)
-            {
-                channel.NotePeriod = samplePeriod;   
-                if (note.EffectParameter1 != 0 || note.EffectParameter2 != 0)
+                if (samplePeriod != 0)
                 {
-                    channel.SlideAmount = note.EffectParameter;
+                    channel.NotePeriod = samplePeriod;
+                    if (note.EffectParameter1 != 0 || note.EffectParameter2 != 0)
+                    {
+                        channel.SlideAmount = note.EffectParameter;
+                    }
                 }
-            }
-            return;
+                return;
 
             case ModuleEffect.Vibrato:
-            if (note.EffectParameter1 != 0)
-            {
-                channel.VibratoSpeed = note.EffectParameter1;
-            } 
-            
-            if (note.EffectParameter2 != 0)
-            {
-                channel.VibratoAmplitude = note.EffectParameter2;
-            }
+                if (note.EffectParameter1 != 0)
+                {
+                    channel.VibratoSpeed = note.EffectParameter1;
+                }
+
+                if (note.EffectParameter2 != 0)
+                {
+                    channel.VibratoAmplitude = note.EffectParameter2;
+                }
                 break;
 
             case ModuleEffect.SetTempo:
                 if (note.EffectParameter <= 32)
                 {
                     speed = note.EffectParameter;
-        }
-        else
-        {
+                }
+                else
+                {
                     speed = 50 * note.EffectParameter;
                 }
                 break;
 
             default:
-            channel.VibratoAmount = 0;
+                channel.VibratoAmount = 0;
                 break;
         }
 
@@ -307,41 +307,29 @@ public sealed class ModulePlayer
                 break;
 
             case ModuleEffect.TonePortamento when !firstTick:
-                if (channel.Period < channel.NotePeriod)
-                    AddWithMax(ref channel.Period, channel.SlideAmount, channel.NotePeriod);
-                else
-                    SubtractWithMin(ref channel.Period, channel.SlideAmount, channel.NotePeriod);
-
+                TonePortamento(ref channel);
                 break;
 
             case ModuleEffect.Vibrato:
-            {
-                var waveformOffset = channel.VibratoTicks * channel.VibratoSpeed % 64;
-                var waveformPosition = waveformOffset / 64f;
-                double unitVibatoAmount = channel.VibratoWaveform switch
-                {
-                    OscillatorWaveform.Sine => double.SinPi(waveformPosition * 2),
-                    OscillatorWaveform.Sawtooth => double.Lerp(1, -1, waveformPosition),
-                    OscillatorWaveform.Square => waveformPosition < 0.5 ? 1 : -1,
-                    OscillatorWaveform.Random => Random.Shared.NextDouble() * 2 - 1,
-                    _ => throw new InvalidDataException(),
-                };
-
-                channel.VibratoAmount = (sbyte)(-unitVibatoAmount * channel.VibratoAmplitude * 2);
-
+                Vibrato(ref channel);
                 break;
-            }
+
+            case ModuleEffect.VolumeSlideAndTonePortamento:
+                TonePortamento(ref channel);
+                VolumeSlide(ref channel, note);
+                break;
+
+            case ModuleEffect.VolumeSlideAndVibrato:
+                Vibrato(ref channel);
+                VolumeSlide(ref channel, note);
+                break;
 
             case ModuleEffect.SetOffset when firstTick:
                 channel.Position = note.EffectParameter * 256;
                 break;
 
             case ModuleEffect.VolumeSlide when !firstTick:
-                if (note.EffectParameter1 != 0)
-                    AddWithMax<byte>(ref channel.Volume, note.EffectParameter1, 64);
-                else if (note.EffectParameter2 != 0)
-                    SubtractWithMin<byte>(ref channel.Volume, note.EffectParameter2, 0);
-
+                VolumeSlide(ref channel, note);
                 break;
 
             case ModuleEffect.SetVolume:
@@ -355,6 +343,38 @@ public sealed class ModulePlayer
             case ModuleEffect.SetTempo:
                 break;
         }
+    }
+
+    private static void Vibrato(ref ChannelState channel)
+    {
+        var waveformOffset = channel.VibratoTicks * channel.VibratoSpeed % 64;
+        var waveformPosition = waveformOffset / 64f;
+        double unitVibatoAmount = channel.VibratoWaveform switch
+        {
+            OscillatorWaveform.Sine => double.SinPi(waveformPosition * 2),
+            OscillatorWaveform.Sawtooth => double.Lerp(1, -1, waveformPosition),
+            OscillatorWaveform.Square => waveformPosition < 0.5 ? 1 : -1,
+            OscillatorWaveform.Random => Random.Shared.NextDouble() * 2 - 1,
+            _ => throw new InvalidDataException(),
+        };
+
+        channel.VibratoAmount = (sbyte)(-unitVibatoAmount * channel.VibratoAmplitude * 2);
+    }
+
+    private static void VolumeSlide(ref ChannelState channel, ModuleNote note)
+    {
+        if (note.EffectParameter1 != 0)
+            AddWithMax<byte>(ref channel.Volume, note.EffectParameter1, 64);
+        else if (note.EffectParameter2 != 0)
+            SubtractWithMin<byte>(ref channel.Volume, note.EffectParameter2, 0);
+    }
+
+    private static void TonePortamento(ref ChannelState channel)
+    {
+        if (channel.Period < channel.NotePeriod)
+            AddWithMax(ref channel.Period, channel.SlideAmount, channel.NotePeriod);
+        else
+            SubtractWithMin(ref channel.Period, channel.SlideAmount, channel.NotePeriod);
     }
 
     private static void ApplyExtendedEffect(ref ChannelState channel, ModuleNote note, bool firstTick)
