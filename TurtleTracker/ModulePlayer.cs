@@ -408,7 +408,7 @@ public sealed class ModulePlayer
             OscillatorWaveform.Random => Random.Shared.NextDouble() * 2 - 1,
             _ => throw new InvalidDataException(),
         };
-        
+
         return unitWaveformValue * depth;
     }
 
@@ -433,11 +433,19 @@ public sealed class ModulePlayer
         switch (note.ExtendedEffect)
         {
             case ModuleExtendedEffect.FinePortamentoUp when firstTick:
-                SubtractWithMin<short>(ref channel.Period, note.EffectParameter, 113);
+                SubtractWithMin<short>(ref channel.Period, note.EffectParameter2, 113);
                 break;
 
             case ModuleExtendedEffect.FinePortamentoDown when firstTick:
-                AddWithMax<short>(ref channel.Period, note.EffectParameter, 856);
+                AddWithMax<short>(ref channel.Period, note.EffectParameter2, 856);
+                break;
+
+            case ModuleExtendedEffect.FineVolumeSlideUp when firstTick:
+                AddWithMax<byte>(ref channel.Volume, note.EffectParameter2, 64);
+                break;
+
+            case ModuleExtendedEffect.FineVolumeSlideDown when firstTick:
+                SubtractWithMin<byte>(ref channel.Volume, note.EffectParameter2, 0);
                 break;
 
             case ModuleExtendedEffect.SetVibratoWaveform:
