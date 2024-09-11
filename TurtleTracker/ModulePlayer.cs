@@ -157,8 +157,9 @@ public sealed class ModulePlayer
     {
         var (sampleNumber, samplePeriod, _) = note;
 
-        if (note.Effect is ModuleEffect.TonePortamento or ModuleEffect.VolumeSlideAndTonePortamento)
+        switch (note.Effect)
         {
+            case ModuleEffect.TonePortamento or ModuleEffect.VolumeSlideAndTonePortamento:
             if (samplePeriod != 0)
             {
                 channel.NotePeriod = samplePeriod;   
@@ -167,12 +168,9 @@ public sealed class ModulePlayer
                     channel.SlideAmount = note.EffectParameter;
                 }
             }
-
             return;
-        }
 
-        if (note.Effect == ModuleEffect.Vibrato)
-        {
+            case ModuleEffect.Vibrato:
             if (note.EffectParameter1 != 0)
             {
                 channel.VibratoSpeed = note.EffectParameter1;
@@ -182,10 +180,22 @@ public sealed class ModulePlayer
             {
                 channel.VibratoAmplitude = note.EffectParameter2;
             }
+                break;
+
+            case ModuleEffect.SetTempo:
+                if (note.EffectParameter <= 32)
+                {
+                    speed = note.EffectParameter;
         }
         else
         {
+                    speed = 50 * note.EffectParameter;
+                }
+                break;
+
+            default:
             channel.VibratoAmount = 0;
+                break;
         }
 
         if (sampleNumber != 0)
