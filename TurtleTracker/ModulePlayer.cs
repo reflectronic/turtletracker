@@ -55,10 +55,17 @@ public sealed class ModulePlayer
 
         public byte VibratoTicks;
         public OscillatorWaveform VibratoWaveform;
-        public bool VibratoRetrigger;
+        public bool VibratoRetrigger = true;
         public sbyte VibratoAmount;
         public byte VibratoSpeed;
-        public byte VibratoAmplitude;
+        public byte VibratoDepth;
+
+        public byte TremoloTicks;
+        public OscillatorWaveform TremoloWaveform;
+        public bool TremoloRetrigger = true;
+        public sbyte TremoloAmount;
+        public byte TremoloSpeed;
+        public byte TremoloDepth;
     };
 
     private enum OscillatorWaveform
@@ -178,7 +185,19 @@ public sealed class ModulePlayer
 
                 if (note.EffectParameter2 != 0)
                 {
-                    channel.VibratoAmplitude = note.EffectParameter2;
+                    channel.VibratoDepth = note.EffectParameter2;
+                }
+                break;
+
+            case ModuleEffect.Tremolo:
+                if (note.EffectParameter1 != 0)
+                {
+                    channel.TremoloSpeed = note.EffectParameter1;
+                }
+
+                if (note.EffectParameter2 != 0)
+                {
+                    channel.TremoloDepth = note.EffectParameter2;
                 }
                 break;
 
@@ -218,6 +237,11 @@ public sealed class ModulePlayer
             if (channel.VibratoRetrigger)
             {
                 channel.VibratoTicks = 0;
+            }
+
+            if (channel.TremoloRetrigger)
+            {
+                channel.TremoloTicks = 0;
             }
         }
     }
@@ -265,7 +289,7 @@ public sealed class ModulePlayer
                 sampledPosition = newStart;
             }
 
-            var volumeAdjustment = channel.Volume / 64f;
+            var volumeAdjustment = (channel.Volume + channel.TremoloAmount) / 64f;
             outputData[i] = sampleData[sampledPosition] * volumeAdjustment / 128f;
 
             var finetuneAdjustment = double.Pow(2, channel.Finetune / 96d);
@@ -277,6 +301,7 @@ public sealed class ModulePlayer
         }
 
         channel.VibratoTicks++;
+        channel.TremoloTicks++;
     }
 
     private static void AddWithMax<T>(ref T value, T increment, T max) where T : INumber<T>
@@ -324,6 +349,10 @@ public sealed class ModulePlayer
                 VolumeSlide(ref channel, note);
                 break;
 
+            case ModuleEffect.Tremolo:
+                Tremolo(ref channel);
+                break;
+
             case ModuleEffect.SetOffset when firstTick:
                 channel.Position = note.EffectParameter * 256;
                 break;
@@ -345,11 +374,33 @@ public sealed class ModulePlayer
         }
     }
 
+    private static void Tremolo(ref ChannelState channel)
+    {
+        double tremoloAmount = WaveformValue(
+            channel.TremoloWaveform,
+            channel.TremoloTicks,
+            channel.TremoloSpeed,
+            channel.TremoloDepth);
+
+        channel.TremoloAmount = (sbyte)(-tremoloAmount * 4);
+    }
+
     private static void Vibrato(ref ChannelState channel)
     {
-        var waveformOffset = channel.VibratoTicks * channel.VibratoSpeed % 64;
+        double vibratoAmount = WaveformValue(
+            channel.VibratoWaveform,
+            channel.VibratoTicks,
+            channel.VibratoSpeed,
+            channel.VibratoDepth);
+
+        channel.VibratoAmount = (sbyte)(-vibratoAmount * 2);
+    }
+
+    private static double WaveformValue(OscillatorWaveform waveform, byte ticks, byte speed, byte depth)
+    {
+        var waveformOffset = ticks * speed % 64;
         var waveformPosition = waveformOffset / 64f;
-        double unitVibatoAmount = channel.VibratoWaveform switch
+        double unitWaveformValue = waveform switch
         {
             OscillatorWaveform.Sine => double.SinPi(waveformPosition * 2),
             OscillatorWaveform.Sawtooth => double.Lerp(1, -1, waveformPosition),
@@ -357,8 +408,8 @@ public sealed class ModulePlayer
             OscillatorWaveform.Random => Random.Shared.NextDouble() * 2 - 1,
             _ => throw new InvalidDataException(),
         };
-
-        channel.VibratoAmount = (sbyte)(-unitVibatoAmount * channel.VibratoAmplitude * 2);
+        
+        return unitWaveformValue * depth;
     }
 
     private static void VolumeSlide(ref ChannelState channel, ModuleNote note)
@@ -393,7 +444,11 @@ public sealed class ModulePlayer
                 channel.VibratoWaveform = (OscillatorWaveform)(note.EffectParameter2 & 0b11);
                 channel.VibratoRetrigger = (note.EffectParameter2 & 0b100) == 0;
                 break;
-            
+
+            case ModuleExtendedEffect.SetTremoloWaveform:
+                channel.TremoloWaveform = (OscillatorWaveform)(note.EffectParameter2 & 0b11);
+                channel.TremoloRetrigger = (note.EffectParameter2 & 0b100) == 0;
+                break;
         }
     }
 
