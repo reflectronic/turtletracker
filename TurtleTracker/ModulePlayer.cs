@@ -53,14 +53,14 @@ public sealed class ModulePlayer
         public short NotePeriod;
         public byte SlideAmount;
 
-        public byte VibratoTicks;
+        public byte VibratoPosition;
         public OscillatorWaveform VibratoWaveform;
         public bool VibratoRetrigger = true;
         public sbyte VibratoAmount;
         public byte VibratoSpeed;
         public byte VibratoDepth;
 
-        public byte TremoloTicks;
+        public byte TremoloPosition;
         public OscillatorWaveform TremoloWaveform;
         public bool TremoloRetrigger = true;
         public sbyte TremoloAmount;
@@ -99,12 +99,13 @@ public sealed class ModulePlayer
             {
                 var division = Division;
 
-                UpdateChannel(ref channel1, division.Channel1);
-                UpdateChannel(ref channel2, division.Channel2);
-                UpdateChannel(ref channel3, division.Channel3);
-                UpdateChannel(ref channel4, division.Channel4);
+                int extraDivisions = 0;
+                UpdateChannel(ref channel1, division.Channel1, ref extraDivisions);
+                UpdateChannel(ref channel2, division.Channel2, ref extraDivisions);
+                UpdateChannel(ref channel3, division.Channel3, ref extraDivisions);
+                UpdateChannel(ref channel4, division.Channel4, ref extraDivisions);
 
-                for (int i = 0; i < speed; i++)
+                for (int i = 0; i < speed + (extraDivisions * speed); i++)
                 {
                     var firstTick = i == 0;
                     RenderChannel(ref channel1, division.Channel1, firstTick);
@@ -160,7 +161,7 @@ public sealed class ModulePlayer
         }
     }
 
-    private void UpdateChannel(ref ChannelState channel, ModuleNote note)
+    private void UpdateChannel(ref ChannelState channel, ModuleNote note, ref int extraDivisions)
     {
         var (sampleNumber, samplePeriod, _) = note;
 
@@ -212,10 +213,15 @@ public sealed class ModulePlayer
                 }
                 break;
 
+            case ModuleEffect.Extended when note.ExtendedEffect == ModuleExtendedEffect.PatternDelay:
+                extraDivisions = note.EffectParameter2;
+                break;
+
             default:
                 channel.VibratoAmount = 0;
+                channel.TremoloAmount = 0;
                 break;
-        }
+        }     
 
         if (sampleNumber != 0)
         {
@@ -236,12 +242,12 @@ public sealed class ModulePlayer
 
             if (channel.VibratoRetrigger)
             {
-                channel.VibratoTicks = 0;
+                channel.VibratoPosition = 0;
             }
 
             if (channel.TremoloRetrigger)
             {
-                channel.TremoloTicks = 0;
+                channel.TremoloPosition = 0;
             }
         }
     }
@@ -300,8 +306,19 @@ public sealed class ModulePlayer
             channel.Position += ratio;
         }
 
-        channel.VibratoTicks++;
-        channel.TremoloTicks++;
+        if (!firstTick)
+        {
+            if (note.Effect is ModuleEffect.Vibrato or ModuleEffect.VolumeSlideAndVibrato)
+            {
+                channel.VibratoPosition += channel.VibratoSpeed;
+                channel.VibratoPosition %= 64;
+            }
+            else if (note.Effect is ModuleEffect.Tremolo)
+            {
+                channel.TremoloPosition += channel.TremoloSpeed;
+                channel.TremoloPosition %= 64;
+            }
+        }
     }
 
     private static void AddWithMax<T>(ref T value, T increment, T max) where T : INumber<T>
@@ -378,8 +395,7 @@ public sealed class ModulePlayer
     {
         double tremoloAmount = WaveformValue(
             channel.TremoloWaveform,
-            channel.TremoloTicks,
-            channel.TremoloSpeed,
+            channel.TremoloPosition,
             channel.TremoloDepth);
 
         channel.TremoloAmount = (sbyte)(-tremoloAmount * 4);
@@ -389,16 +405,14 @@ public sealed class ModulePlayer
     {
         double vibratoAmount = WaveformValue(
             channel.VibratoWaveform,
-            channel.VibratoTicks,
-            channel.VibratoSpeed,
+            channel.VibratoPosition,
             channel.VibratoDepth);
 
-        channel.VibratoAmount = (sbyte)(-vibratoAmount * 2);
+        channel.VibratoAmount = (sbyte)(vibratoAmount * 2);
     }
 
-    private static double WaveformValue(OscillatorWaveform waveform, byte ticks, byte speed, byte depth)
+    private static double WaveformValue(OscillatorWaveform waveform, byte waveformOffset, byte depth)
     {
-        var waveformOffset = ticks * speed % 64;
         var waveformPosition = waveformOffset / 64f;
         double unitWaveformValue = waveform switch
         {

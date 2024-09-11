@@ -10,20 +10,22 @@ var modFile = ModuleFile.Parse(modData);
 Console.WriteLine($"Name: {modFile.Name}");
 
 var notes = modFile.Patterns
-    .SelectMany(p => p.Divisions)
-    .SelectMany<ModuleDivision, ModuleNote>(p => [p.Channel1, p.Channel2, p.Channel3, p.Channel4]);
+    .SelectMany((p, i) => p.Divisions.Select(d => (d, i)))
+    .SelectMany(p => new (int Pattern, ModuleNote Note)[] { (p.i, p.d.Channel1), (p.i, p.d.Channel2), (p.i, p.d.Channel3), (p.i, p.d.Channel4) });
 
-var effects = notes.Select(n => n.Effect).Distinct().Order();
-var extendedEffects = notes.Where(n => n.Effect == ModuleEffect.Extended).Select(n => n.ExtendedEffect).Distinct().Order();
+var effects = notes.DistinctBy(n => n.Note.Effect);
+var extendedEffects = notes.Where(n => n.Note.Effect == ModuleEffect.Extended).DistinctBy(n => n.Note.ExtendedEffect);
 
-foreach (var effect in effects)
+foreach (var (pattern, note) in effects)
 {
-    Console.WriteLine($"Effect {effect} {(int)effect:X} used.");
+    var effect = note.Effect;
+    Console.WriteLine($"Effect {effect} {(int)effect:X} used in pattern {pattern}.");
 }
 
-foreach (var effect in extendedEffects)
+foreach (var (pattern, note) in extendedEffects)
 {
-    Console.WriteLine($"Extended effect {effect} {(int)effect:X} used.");
+    var effect = note.ExtendedEffect;
+    Console.WriteLine($"Extended effect {effect} {(int)effect:X} used in pattern {pattern}.");
 }
 
 var player = new ModulePlayer(modFile);
