@@ -46,11 +46,13 @@ public sealed class ModulePlayer
 
         public short Period = Period;
         public double Position;
+        public int StartPosition;
         public byte Volume;
         public sbyte Finetune;
         public bool Looping;
 
         public short NotePeriod;
+        public byte NoteOffset;
         public byte SlideAmount;
 
         public byte VibratoPosition;
@@ -164,7 +166,7 @@ public sealed class ModulePlayer
 
     private void UpdateChannel(ChannelState channel, ModuleNote note, ref int extraDivisions)
     {
-        var (sampleNumber, samplePeriod, _) = note;
+        var (noteSample, notePeriod, _) = note;
 
         if (note.Effect is not (ModuleEffect.Vibrato or ModuleEffect.VolumeSlideAndVibrato))
         {
@@ -186,9 +188,9 @@ public sealed class ModulePlayer
                 goto case ModuleEffect.VolumeSlideAndTonePortamento;
 
             case ModuleEffect.VolumeSlideAndTonePortamento:
-                if (samplePeriod != 0)
+                if (notePeriod != 0)
                 {
-                    channel.NotePeriod = samplePeriod;
+                    channel.NotePeriod = notePeriod;
                 }
                 return;
 
@@ -216,6 +218,13 @@ public sealed class ModulePlayer
                 }
                 break;
 
+            case ModuleEffect.SetOffset:
+                if (note.EffectParameter != 0)
+                {
+                    channel.NoteOffset = note.EffectParameter;
+                }
+                break;
+
             case ModuleEffect.SetTempo:
                 if (note.EffectParameter <= 32)
                 {
@@ -236,21 +245,21 @@ public sealed class ModulePlayer
                 return;
         }
 
-        if (sampleNumber != 0)
+        if (noteSample != 0)
         {
-            channel.Sample = module.Samples[sampleNumber - 1];
-            channel.SampleData = module.SampleData[sampleNumber - 1];
-            channel.Position = 0;
+            channel.Sample = module.Samples[noteSample - 1];
+            channel.SampleData = module.SampleData[noteSample - 1];
+            channel.StartPosition = 0;
             channel.Looping = false;
             channel.Volume = channel.Sample.Volume;
             channel.Finetune = channel.Sample.Finetune;
         }
 
-        if (samplePeriod != 0)
+        if (notePeriod != 0)
         {
-            channel.NotePeriod = samplePeriod;
-            channel.Period = samplePeriod;
-            channel.Position = 0;
+            channel.NotePeriod = notePeriod;
+            channel.Period = notePeriod;
+            channel.Position = channel.StartPosition;
             channel.Looping = false;
 
             if (channel.VibratoRetrigger)
@@ -278,6 +287,8 @@ public sealed class ModulePlayer
 
         var (outputData, sample, sampleData, period) = channel;
 
+        Array.Clear(outputData);
+
         if (period == 0)
         { 
             return;
@@ -293,14 +304,12 @@ public sealed class ModulePlayer
         var loopLength = sample.LoopOffsetLength * 2;
         var loopPointEnd = loopPointStart + loopLength;
 
-        Array.Clear(outputData);
-
         for (int i = 0; i < outputData.Length; i++)
         {
             var sampledPosition = (int)channel.Position;
             if (sampledPosition >= sampleLength)
             {
-                if (sample.LoopOffsetLength < 1)
+                if (sample.LoopOffsetLength <= 1)
                 {
                     break;
                 }
@@ -372,7 +381,7 @@ public sealed class ModulePlayer
                 TonePortamento(channel);
                 break;
 
-            case ModuleEffect.Vibrato:
+            case ModuleEffect.Vibrato when !firstTick:
                 Vibrato(channel);
                 break;
 
@@ -381,21 +390,19 @@ public sealed class ModulePlayer
                 VolumeSlide(channel, note);
                 break;
 
-            case ModuleEffect.VolumeSlideAndVibrato:
+            case ModuleEffect.VolumeSlideAndVibrato when !firstTick:
                 Vibrato(channel);
-
-                if (!firstTick)
-                {
-                    VolumeSlide(channel, note);
-                }
+                VolumeSlide(channel, note);
                 break;
 
-            case ModuleEffect.Tremolo:
+            case ModuleEffect.Tremolo when !firstTick:
                 Tremolo(channel);
                 break;
 
-            case ModuleEffect.SetOffset when firstTick:
-                channel.Position = note.EffectParameter * 256;
+            case ModuleEffect.SetOffset when firstTick && note.SamplePeriod != 0:
+                channel.StartPosition += channel.NoteOffset * 256;
+                channel.Position = channel.StartPosition;
+                channel.StartPosition += channel.NoteOffset * 256;
                 break;
 
             case ModuleEffect.VolumeSlide when !firstTick:
