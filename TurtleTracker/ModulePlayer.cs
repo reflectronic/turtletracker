@@ -33,7 +33,7 @@ public sealed class ModulePlayer
     private ModulePattern Pattern => module.Patterns[module.Sequence[patternPosition]];
     private ModuleDivision Division => Pattern.Divisions[divisionPosition];
 
-    private record struct ChannelState(
+    private record ChannelState(
         float[] AudioBuffer, 
         ModuleSample Sample = default!,
         sbyte[] SampleData = default!,
@@ -66,6 +66,8 @@ public sealed class ModulePlayer
         public sbyte TremoloAmount;
         public byte TremoloSpeed;
         public byte TremoloDepth;
+
+        public sbyte NoteDelay = -1;
     };
 
     private enum OscillatorWaveform
@@ -76,10 +78,10 @@ public sealed class ModulePlayer
         Random = 3
     }
 
-    private ChannelState channel1 = new(new float[882]);
-    private ChannelState channel2 = new(new float[882]);
-    private ChannelState channel3 = new(new float[882]);
-    private ChannelState channel4 = new(new float[882]);
+    private readonly ChannelState channel1 = new(new float[882]);
+    private readonly ChannelState channel2 = new(new float[882]);
+    private readonly ChannelState channel3 = new(new float[882]);
+    private readonly ChannelState channel4 = new(new float[882]);
 
     public void Play()
     {
@@ -100,18 +102,17 @@ public sealed class ModulePlayer
                 var division = Division;
 
                 int extraDivisions = 0;
-                UpdateChannel(ref channel1, division.Channel1, ref extraDivisions);
-                UpdateChannel(ref channel2, division.Channel2, ref extraDivisions);
-                UpdateChannel(ref channel3, division.Channel3, ref extraDivisions);
-                UpdateChannel(ref channel4, division.Channel4, ref extraDivisions);
+                UpdateChannel(channel1, division.Channel1, ref extraDivisions);
+                UpdateChannel(channel2, division.Channel2, ref extraDivisions);
+                UpdateChannel(channel3, division.Channel3, ref extraDivisions);
+                UpdateChannel(channel4, division.Channel4, ref extraDivisions);
 
                 for (int i = 0; i < speed + (extraDivisions * speed); i++)
                 {
-                    var firstTick = i == 0;
-                    RenderChannel(ref channel1, division.Channel1, firstTick);
-                    RenderChannel(ref channel2, division.Channel2, firstTick);
-                    RenderChannel(ref channel3, division.Channel3, firstTick);
-                    RenderChannel(ref channel4, division.Channel4, firstTick);
+                    RenderChannel(channel1, division.Channel1, i);
+                    RenderChannel(channel2, division.Channel2, i);
+                    RenderChannel(channel3, division.Channel3, i);
+                    RenderChannel(channel4, division.Channel4, i);
 
                     for (int j = 0; j < outputBuffer.Length; j++)
                     {
@@ -161,20 +162,33 @@ public sealed class ModulePlayer
         }
     }
 
-    private void UpdateChannel(ref ChannelState channel, ModuleNote note, ref int extraDivisions)
+    private void UpdateChannel(ChannelState channel, ModuleNote note, ref int extraDivisions)
     {
         var (sampleNumber, samplePeriod, _) = note;
 
+        if (note.Effect is not (ModuleEffect.Vibrato or ModuleEffect.VolumeSlideAndVibrato))
+        {
+            channel.VibratoAmount = 0;
+        }
+
+        if (note.Effect is not ModuleEffect.Tremolo)
+        {
+            channel.TremoloAmount = 0;
+        }
+
         switch (note.Effect)
         {
-            case ModuleEffect.TonePortamento or ModuleEffect.VolumeSlideAndTonePortamento:
+            case ModuleEffect.TonePortamento:
+                if (note.EffectParameter1 != 0 || note.EffectParameter2 != 0)
+                {
+                    channel.SlideAmount = note.EffectParameter;
+                }
+                goto case ModuleEffect.VolumeSlideAndTonePortamento;
+
+            case ModuleEffect.VolumeSlideAndTonePortamento:
                 if (samplePeriod != 0)
                 {
                     channel.NotePeriod = samplePeriod;
-                    if (note.EffectParameter1 != 0 || note.EffectParameter2 != 0)
-                    {
-                        channel.SlideAmount = note.EffectParameter;
-                    }
                 }
                 return;
 
@@ -217,11 +231,10 @@ public sealed class ModulePlayer
                 extraDivisions = note.EffectParameter2;
                 break;
 
-            default:
-                channel.VibratoAmount = 0;
-                channel.TremoloAmount = 0;
-                break;
-        }     
+            case ModuleEffect.Extended when note.ExtendedEffect == ModuleExtendedEffect.NoteDelay:
+                channel.NoteDelay = (sbyte)note.EffectParameter2;
+                return;
+        }
 
         if (sampleNumber != 0)
         {
@@ -252,9 +265,16 @@ public sealed class ModulePlayer
         }
     }
 
-    private static void RenderChannel(ref ChannelState channel, ModuleNote note, bool firstTick)
+    private void RenderChannel(ChannelState channel, ModuleNote note, int tick)
     {
-        ApplyEffect(ref channel, note, firstTick);
+        if (tick == channel.NoteDelay)
+        {
+            int unused = 0;
+            UpdateChannel(channel, note with { EffectCommand = 0 }, ref unused);
+            channel.NoteDelay = -1;
+        }
+
+        ApplyEffect(channel, note, tick == 0);
 
         var (outputData, sample, sampleData, period) = channel;
 
@@ -306,7 +326,7 @@ public sealed class ModulePlayer
             channel.Position += ratio;
         }
 
-        if (!firstTick)
+        if (tick != 0)
         {
             if (note.Effect is ModuleEffect.Vibrato or ModuleEffect.VolumeSlideAndVibrato)
             {
@@ -333,7 +353,7 @@ public sealed class ModulePlayer
         value = T.Max(saturatedDifference, min);
     }
 
-    private static void ApplyEffect(ref ChannelState channel, ModuleNote note, bool firstTick)
+    private static void ApplyEffect(ChannelState channel, ModuleNote note, bool firstTick)
     {
         switch (note.Effect)
         {
@@ -349,25 +369,29 @@ public sealed class ModulePlayer
                 break;
 
             case ModuleEffect.TonePortamento when !firstTick:
-                TonePortamento(ref channel);
+                TonePortamento(channel);
                 break;
 
             case ModuleEffect.Vibrato:
-                Vibrato(ref channel);
+                Vibrato(channel);
                 break;
 
-            case ModuleEffect.VolumeSlideAndTonePortamento:
-                TonePortamento(ref channel);
-                VolumeSlide(ref channel, note);
+            case ModuleEffect.VolumeSlideAndTonePortamento when !firstTick:
+                TonePortamento(channel);
+                VolumeSlide(channel, note);
                 break;
 
             case ModuleEffect.VolumeSlideAndVibrato:
-                Vibrato(ref channel);
-                VolumeSlide(ref channel, note);
+                Vibrato(channel);
+
+                if (!firstTick)
+                {
+                    VolumeSlide(channel, note);
+                }
                 break;
 
             case ModuleEffect.Tremolo:
-                Tremolo(ref channel);
+                Tremolo(channel);
                 break;
 
             case ModuleEffect.SetOffset when firstTick:
@@ -375,7 +399,7 @@ public sealed class ModulePlayer
                 break;
 
             case ModuleEffect.VolumeSlide when !firstTick:
-                VolumeSlide(ref channel, note);
+                VolumeSlide(channel, note);
                 break;
 
             case ModuleEffect.SetVolume:
@@ -383,7 +407,7 @@ public sealed class ModulePlayer
                 break;
 
             case ModuleEffect.Extended:
-                ApplyExtendedEffect(ref channel, note, firstTick);
+                ApplyExtendedEffect(channel, note, firstTick);
                 break;
 
             case ModuleEffect.SetTempo:
@@ -391,7 +415,7 @@ public sealed class ModulePlayer
         }
     }
 
-    private static void Tremolo(ref ChannelState channel)
+    private static void Tremolo(ChannelState channel)
     {
         double tremoloAmount = WaveformValue(
             channel.TremoloWaveform,
@@ -401,7 +425,7 @@ public sealed class ModulePlayer
         channel.TremoloAmount = (sbyte)(-tremoloAmount * 4);
     }
 
-    private static void Vibrato(ref ChannelState channel)
+    private static void Vibrato(ChannelState channel)
     {
         double vibratoAmount = WaveformValue(
             channel.VibratoWaveform,
@@ -426,7 +450,7 @@ public sealed class ModulePlayer
         return unitWaveformValue * depth;
     }
 
-    private static void VolumeSlide(ref ChannelState channel, ModuleNote note)
+    private static void VolumeSlide(ChannelState channel, ModuleNote note)
     {
         if (note.EffectParameter1 != 0)
             AddWithMax<byte>(ref channel.Volume, note.EffectParameter1, 64);
@@ -434,7 +458,7 @@ public sealed class ModulePlayer
             SubtractWithMin<byte>(ref channel.Volume, note.EffectParameter2, 0);
     }
 
-    private static void TonePortamento(ref ChannelState channel)
+    private static void TonePortamento(ChannelState channel)
     {
         if (channel.Period < channel.NotePeriod)
             AddWithMax(ref channel.Period, channel.SlideAmount, channel.NotePeriod);
@@ -442,7 +466,7 @@ public sealed class ModulePlayer
             SubtractWithMin(ref channel.Period, channel.SlideAmount, channel.NotePeriod);
     }
 
-    private static void ApplyExtendedEffect(ref ChannelState channel, ModuleNote note, bool firstTick)
+    private static void ApplyExtendedEffect(ChannelState channel, ModuleNote note, bool firstTick)
     {
         switch (note.ExtendedEffect)
         {
